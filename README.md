@@ -15,16 +15,25 @@ network calls of any kind.
 
 ## What it looks for
 
-| # | It is called | What it means |
+| It is called | What it means | Tested? |
 |---|---|---|
-| 1 | `through_wall` | A body passed through a wall. It is cast as a ray from the body's recent positions; if the body ended up well past a surface the ray hit, it went through. |
-| 2 | `out_of_bounds` | A body left the world - fell below the floor, or ended up impossibly far from the origin. |
-| 3 | `jitter` | A body keeps reversing direction while barely moving. That is the classic "stuck on a slope and vibrating" bug. |
-| 4 | `nan_numbers` | A position or velocity became `NaN` or infinite. |
-| 5 | `softlock` | The game stopped making progress. You mark progress points in your own code (see below) and the agent notices when it stops reaching new ones. |
-| 6 | `crash` | The engine logged an error or the game died. |
-| 7 | `freeze` | A body stopped moving completely for a long time. |
-| 8 | `lag_spike` | One frame took far longer than the others. |
+| `through_wall` | A body passed through a wall. It is cast as a ray from the body's recent positions; if the body ended up well past a surface the ray hit, it went through. | **yes** - planted bug 1 |
+| `out_of_bounds` | A body left the world - fell below the floor, or ended up impossibly far from the origin. Two rules, one kind. | **yes** - planted bug 3 |
+| `jitter` | A body keeps reversing direction while barely moving. That is the classic "stuck on a slope and vibrating" bug. | **yes** - planted bug 2 |
+| `nan_numbers` | A position or velocity became `NaN` or infinite. | **yes** - planted bug 4 |
+| `stuck` | A body is wedged inside a collider: it is deep inside a surface and the collision normals from several sides cancel out. Only checked on `CharacterBody3D`, because that is the only type that reports slide collisions. | **no** - implemented, no planted-bug test |
+| `softlock` | The game stopped making progress. You mark progress points in your own code (see below) and the agent notices when it stops reaching new ones. **It only fires if your code calls `Bugpup.progress()` at least once** - otherwise the agent has no idea what "progress" means for your game. | **no** - implemented, no planted-bug test |
+| `freeze` | A body stopped moving completely for a long time. Only counts a body that was seen to move earlier, so scenery is not a freeze. | **no** - implemented, no planted-bug test |
+| `lag_spike` | One frame took far longer than the others - more than four times the median of the recent frames. | **no** - implemented, no planted-bug test |
+
+That is **eight** detectors, and the table lists every one of them by the
+exact name the plugin reports. Four have a planted-bug test; four are
+implemented but untested.
+
+**There is no `crash` detector.** An earlier version of this README
+listed one. It does not exist: the plugin does not read engine error
+logs and cannot tell that the game died. The closest thing to it is
+`freeze`, which catches a body that stopped moving - not a crash.
 
 ---
 
@@ -216,8 +225,8 @@ So this test proves two things and no more:
 2. **The same world with the bugs removed produces zero findings**, so
    the false-alarm count is 0, not an estimate.
 
-It does **not** prove the other four detectors work. `softlock`,
-`crash`, `freeze` and `lag_spike` are implemented and listed above,
+It does **not** prove the other four detectors work. `stuck`,
+`softlock`, `freeze` and `lag_spike` are implemented and listed above,
 but this test does not exercise them, so they are not claimed here as
 tested.
 
@@ -265,8 +274,9 @@ These are real, and they are not fixed:
   few seconds can produce a jitter false alarm on the player.
 - **Tunnelling detection needs a body that moved a lot in one frame.**
   A body that creeps through a wall over many frames is not caught.
-- **The crash detector watches the engine's error output.** It catches
-  errors the engine logs. A crash that produces no log line is missed.
+- **There is no crash detector.** The plugin cannot tell that the game
+  died. `freeze` catches a body that stopped moving, which is the
+  closest thing, but it is not a crash.
 - **The softlock detector needs `Bugpup.progress()`.** Without it,
   softlocks are never reported.
 - **Screenshots need a real renderer.** In `--headless` mode there is
