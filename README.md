@@ -181,6 +181,46 @@ It runs two scenes:
 The clean lab is the same world with a flag flipped, so the only
 difference between the two runs is the bugs themselves.
 
+### What the last run actually printed
+
+```
+BUG LAB: 6 confirmed, 4/4 expected kinds caught
+  - kind=through_wall  body=FastBall   replays=3
+  - kind=jitter        body=JitterBox  replays=3
+  - kind=out_of_bounds body=FastBall   replays=3   (120.6 from origin)
+  - kind=nan_numbers   body=NanBox     replays=3
+  - kind=out_of_bounds body=PitFaller  replays=3   (fell below the floor)
+  - kind=out_of_bounds body=Player     replays=3   (fell below the floor)
+CLEAN LAB: 0 reported
+RESULT: PASS - all 4 planted bugs caught, clean scene silent.
+```
+
+**Six findings, four planted bugs.** They are not six different bugs.
+Four is the number of planted bugs, and `4/4 expected kinds caught` is
+the number that matters. The other two findings are the *same* planted
+bugs seen by a second detector:
+
+- `out_of_bounds / FastBall` - the ball went through the thin wall
+  (that is planted bug 1) and kept flying until it was 120.6 units
+  from the origin, which is the *other* out-of-bounds rule. Same bug,
+  second symptom.
+- `out_of_bounds / Player` - the player fell into the hole. The hole
+  is planted bug 3, and the player is not a planted body: the agent
+  drove it in by pressing random keys. Same root cause, different
+  body.
+
+So this test proves two things and no more:
+
+1. **Every planted kind is caught**, and each finding survives a
+   three-times replay.
+2. **The same world with the bugs removed produces zero findings**, so
+   the false-alarm count is 0, not an estimate.
+
+It does **not** prove the other four detectors work. `softlock`,
+`crash`, `freeze` and `lag_spike` are implemented and listed above,
+but this test does not exercise them, so they are not claimed here as
+tested.
+
 ---
 
 ## How it decides what to watch
