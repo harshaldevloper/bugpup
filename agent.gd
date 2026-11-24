@@ -91,6 +91,15 @@ var _seen_progress := false
 
 var _body_state := {}
 var _quarantined := {}
+# The number of physics frames since the CURRENT scene was loaded.
+# The input log is written against this, not against _ticks: the
+# agent's own counter starts whenever the agent happens to start,
+# which can be several frames after the scene, and that gap varies
+# from run to run. A replay reloads the scene and re-drives the
+# inputs, so the inputs must be stamped with the game's own frame
+# count for the replay to put them in the same place.
+var _scene_ticks := 0
+var _watched_scene: Node = null
 var _last_screenshot := ""
 var _last_input_frame := -999
 var _input_log: Array = []
@@ -220,8 +229,8 @@ func _candidate_actions() -> Array[StringName]:
 func _press(action: StringName) -> void:
 	Input.action_press(action, 1.0)
 	_pressed.append(action)
-	_last_input_frame = _ticks
-	_input_log.append({"frame": _ticks, "action": String(action), "pressed": true})
+	_last_input_frame = _scene_ticks
+	_input_log.append({"frame": _scene_ticks, "action": String(action), "pressed": true})
 	# Remember how everything was moving at the moment of the press,
 	# so the driver can be worked out from what changes next.
 	_begin_driver_probe()
@@ -230,7 +239,7 @@ func _press(action: StringName) -> void:
 func _release_all() -> void:
 	for action in _pressed:
 		Input.action_release(action)
-		_input_log.append({"frame": _ticks, "action": String(action), "pressed": false})
+		_input_log.append({"frame": _scene_ticks, "action": String(action), "pressed": false})
 	_pressed.clear()
 
 
@@ -291,6 +300,11 @@ func replay_finding(key: String) -> int:
 		var reload_err := tree.reload_current_scene()
 		if reload_err != OK:
 			break
+		# The scene is new, so the game's frame count starts again.
+		# The main loop stands down during the replay, so this has to
+		# be reset here.
+		_watched_scene = null
+		_scene_ticks = 0
 		# Let the new scene build itself. ONE frame is enough: the
 		# probe measured the new scene's bodies already in place on the
 		# first physics frame after the reload. A longer wait is not
@@ -320,6 +334,13 @@ func _replay_inputs_and_watch(inputs: Array, target: String) -> bool:
 	var replay_ticks := 0
 	_replaying = true
 	var found := false
+	# The replay drives the recorded inputs on the NEW scene's own
+	# frame count. The inputs were stamped with the original scene's
+	# frame count, and a replay that put them on a different frame
+	# would give the player a different path - so the finding would
+	# never come back. The new scene's frame count starts at 0 and
+	# the scene has already run one frame by the time we get here.
+	var replay_scene_ticks := 0
 
 	# How long to run.
 	#
@@ -349,7 +370,10 @@ func _replay_inputs_and_watch(inputs: Array, target: String) -> bool:
 	while replay_ticks < limit or (not found and replay_ticks < deadline):
 		replay_ticks += 1
 		_replay_ticks = replay_ticks
-		replay_index = _drive_replay_input(inputs, replay_index, replay_ticks)
+		# The new scene's own frame count. One frame has already run
+		# since the reload, so it starts at 1 here.
+		replay_scene_ticks += 1
+		replay_index = _drive_replay_input(inputs, replay_index, replay_scene_ticks)
 		if replay_ticks % 10 == 0:
 			_discover_movers()
 		for body in _watched_bodies():
@@ -703,6 +727,15 @@ func _physics_process(delta: float) -> void:
 		_frame_ms.remove_at(0)
 	_elapsed += delta
 	_ticks += 1
+	# Count the game's frames since the scene was loaded. This is the
+	# clock the input log is written against.
+	var tree := get_tree()
+	var scene: Node = tree.current_scene if tree != null else null
+	if scene != _watched_scene:
+		# A new scene. The game's frame count starts again.
+		_watched_scene = scene
+		_scene_ticks = 0
+	_scene_ticks += 1
 
 	_drive_random_input()
 
