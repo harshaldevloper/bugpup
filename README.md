@@ -171,6 +171,7 @@ The main ones:
 | `seed_value` | The random seed. The same seed plays the same way | `20261116` |
 | `action_hold_frames` | How many frames a pressed button is held | `6` |
 | `idle_frames` | How many frames to wait before pressing again | `3` |
+| `bot_input_grace` | How long after the bot's last input a reversal is excused as "the bot did it" | `20` |
 | `jitter_flips` | Direction reversals before it counts as jitter | `6` |
 | `jitter_window_frames` | The window those reversals are counted in | `45` |
 | `jitter_max_avg_step` | How far the body may move per frame and still be "barely moving" | `0.25` |
@@ -294,9 +295,17 @@ can win.
 
 These are real, and they are not fixed:
 
-- **A body the bot drives can look like it is jittering.** The driver
-  detection needs a few presses before it is confident, so the first
-  few seconds can produce a jitter false alarm on the player.
+- **A body the bot drives can look like it is jittering, in the first
+  few seconds.** The agent works out which body it is driving by
+  measuring, and that needs a few presses before it is confident. Until
+  then the player can produce a jitter false alarm. After that, a
+  reversal is excused for `bot_input_grace` frames after the bot's last
+  input - long enough to cover the key it held, the gap before the next
+  key, and the body's momentum carrying over afterwards. An earlier
+  version excused only three frames, which expired while the bot was
+  still holding the key, so the player's deceleration was blamed on
+  the game. That false alarm appeared on Godot 4.6.3 and not on 4.7.2,
+  because the timing was that close.
 - **Tunnelling detection needs a body that moved a lot in one frame.**
   A body that creeps through a wall over many frames is not caught.
 - **There is no crash detector.** The plugin cannot tell that the game
@@ -314,8 +323,9 @@ These are real, and they are not fixed:
 ## How it was built
 
 Everything here was written by an AI agent working against the Godot
-4.6.3 class documentation and the engine's own output. Every claim in
-this file was checked by running it:
+4.6.3 class documentation and the engine's own output. The test suite
+passes on **both Godot 4.6.3 and 4.7.2**, with identical results.
+Every claim in this file was checked by running it:
 
 - the four planted bugs are caught, each with `replays=3`;
 - the clean scene reports nothing;

@@ -40,6 +40,10 @@ const API_PATH := "res://addons/bugpup/bugpup_api.gd"
 @export var seed_value := 20261116
 @export var action_hold_frames := 6
 @export var idle_frames := 3
+# How long after the bot's last input event a reversal is excused as
+# "the bot did it". It has to cover the key it held, the gap before
+# the next key, and the body's momentum carrying over afterwards.
+@export var bot_input_grace := 20
 
 @export var jitter_flips := 6
 @export var jitter_window_frames := 45
@@ -240,6 +244,15 @@ func _release_all() -> void:
 	for action in _pressed:
 		Input.action_release(action)
 		_input_log.append({"frame": _scene_ticks, "action": String(action), "pressed": false})
+	# A release is an input event too. The jitter detector excuses a
+	# reversal when the bot is driving the body, and that excuse has
+	# to cover the whole span of the bot's activity - not just the
+	# three frames after a press. A key held for six frames expires a
+	# three-frame excuse on frame four, while the bot is still holding
+	# it, so the player's deceleration gets blamed on the game. The
+	# excuse now ends when the bot stops touching the controls.
+	if not _pressed.is_empty():
+		_last_input_frame = _scene_ticks
 	_pressed.clear()
 
 
@@ -840,7 +853,13 @@ func _check_body(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 	# shakes on its own is a real bug, so the excuse only applies to
 	# the body the bot is actually steering - and which body that is
 	# is worked out by measurement, not by guessing.
-	var input_recent := (ticks_now() - _last_input_frame) <= 3
+	# How long the excuse lasts. It has to cover the bot's whole
+	# activity: the key it held, the gap before the next key, and the
+	# player's momentum carrying over afterwards. A fixed three-frame
+	# window expired while the bot was still holding the key, so the
+	# player's deceleration was blamed on the game - a false alarm
+	# that appeared on some engine versions and not others.
+	var input_recent := (ticks_now() - _last_input_frame) <= bot_input_grace
 	var bot_drove := _is_bot_driven(body) and input_recent
 	if step_len > 0.0005 and prev_move.length() > 0.0005:
 		if delta_vec.dot(prev_move) < 0.0 and not bot_drove:
