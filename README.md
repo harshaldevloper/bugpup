@@ -113,6 +113,16 @@ could never be confirmed - it was seen, but the replay ended before
 the body had fallen far enough to fall again. The replay test in
 `tests/replay_test.gd` exists to keep that from coming back.
 
+**The replay puts the inputs back on the same frames.** A replay
+reloads your scene and presses the same buttons on the same frames,
+so the game ends up in the same state and the finding comes back the
+same way. The frames are counted from the moment the scene was
+loaded, not from the moment the agent started - because the agent
+may start a few frames after the scene does, and that gap is not the
+same every run. An earlier version used the agent's own counter, so
+the inputs landed on different frames each time, the player walked a
+different path, and the finding never came back.
+
 ---
 
 ## What a finding looks like
