@@ -103,6 +103,16 @@ Reloading the scene is what makes this work for both kinds of bug:
 The replay reports which specific wall or surface the body went
 through, so the bug note points at something real.
 
+**The replay keeps running until the finding comes back**, up to
+`replay_max_seconds` (10 seconds by default). This matters for a bug
+that needs time to develop: a body falling out of the world has to
+fall all the way past the threshold, and at a normal gravity that
+takes over two seconds. An earlier version stopped the replay at a
+fixed number of frames after the last button press, so a real bug
+could never be confirmed - it was seen, but the replay ended before
+the body had fallen far enough to fall again. The replay test in
+`tests/replay_test.gd` exists to keep that from coming back.
+
 ---
 
 ## What a finding looks like
@@ -161,6 +171,7 @@ The main ones:
 | `softlock_seconds` | This long without new progress is a softlock | `25` |
 | `freeze_seconds` | This long without moving is a freeze | `6` |
 | `replay_attempts` | How many times a finding is replayed | `3` |
+| `replay_max_seconds` | How long a replay may keep running, waiting for the finding to come back | `10` |
 
 The Inspector shows the rest - `jitter_min_path`, `stuck_normal_cancel`,
 `lag_window`, `freeze_min_travel` and `tunnel_history_frames` - with the
@@ -176,7 +187,7 @@ The plugin ships with its own test scene and its own test run:
 bash addons/bugpup/tests/run_tests.sh
 ```
 
-It runs two scenes:
+It runs three things:
 
 - **the bug lab** - the same world with four bugs planted on purpose
   (a fast ball through a thin wall, a shaking box, a hole in the
@@ -186,6 +197,10 @@ It runs two scenes:
   fixed. It must report **nothing**. Anything it reports there is a
   false alarm, so the false-alarm count is a measurement rather than a
   claim.
+- **the replay test** - a body that drops slowly past the
+  out-of-bounds threshold. The finding only appears several seconds
+  in, so it proves the replay is long enough to catch a finding that
+  needs time to develop.
 
 The clean lab is the same world with a flag flipped, so the only
 difference between the two runs is the bugs themselves.

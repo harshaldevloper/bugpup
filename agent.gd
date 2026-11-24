@@ -65,6 +65,11 @@ const API_PATH := "res://addons/bugpup/bugpup_api.gd"
 @export var freeze_min_travel := 0.5
 
 @export var replay_attempts := 3
+# How long a replay may keep running, past the last recorded input,
+# waiting for the same kind of finding to come back. A finding that
+# needs time to develop - a body falling out of the world, for
+# instance - cannot reproduce inside the input span alone.
+@export var replay_max_seconds := 10.0
 
 # How many recent positions the tunnel check casts a ray from.
 @export var tunnel_history_frames := 4
@@ -316,16 +321,32 @@ func _replay_inputs_and_watch(inputs: Array, target: String) -> bool:
 	_replaying = true
 	var found := false
 
-	# How long to run: the span of the recorded inputs, plus a tail so a
-	# bug that happens after the last press is still caught - and never
-	# less than enough frames for the slowest detector (jitter needs a
-	# full window of frames plus several reversals inside it).
+	# How long to run.
+	#
+	# The replay used to stop at a FIXED number of frames, measured from
+	# the last recorded input. That was wrong for any finding that needs
+	# time to develop: a body falling out of the world has to fall all
+	# the way past the threshold, and at the game's gravity that takes
+	# over two seconds - far longer than the old 60-frame tail. The
+	# finding was real, but the replay ended before it could happen
+	# again, so it was never confirmed.
+	#
+	# Now the replay keeps running until the SAME KIND of finding fires,
+	# up to replay_max_seconds. It stops the moment the finding comes
+	# back, so a quick finding still costs nothing.
 	var total_frames := 0
 	if not inputs.is_empty():
 		total_frames = int(inputs[inputs.size() - 1].get("frame", 0))
+	# The tail after the last input, so a bug that happens after the
+	# last press is still caught - and never less than enough frames
+	# for the slowest detector (jitter needs a full window of frames
+	# plus several reversals inside it).
 	var limit: int = maxi(total_frames + 60, 120)
+	# The hard ceiling: the replay may run this many frames past the
+	# last input looking for the finding to come back.
+	var deadline: int = total_frames + int(replay_max_seconds * 60.0)
 
-	while replay_ticks < limit:
+	while replay_ticks < limit or (not found and replay_ticks < deadline):
 		replay_ticks += 1
 		_replay_ticks = replay_ticks
 		replay_index = _drive_replay_input(inputs, replay_index, replay_ticks)

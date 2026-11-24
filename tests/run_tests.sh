@@ -35,7 +35,9 @@ for script in \
 	res://addons/bugpup/bugpup_api.gd \
 	res://addons/bugpup/agent_panel.gd \
 	res://addons/bugpup/tests/bug_lab.tscn.gd \
-	res://addons/bugpup/tests/harness.gd; do
+	res://addons/bugpup/tests/slow_fall_lab.tscn.gd \
+	res://addons/bugpup/tests/harness.gd \
+	res://addons/bugpup/tests/replay_test.gd; do
 	if [ ! -f "$PROJECT_DIR/${script#res://}" ]; then
 		echo "  SKIP $script (not present)"
 		continue
@@ -57,9 +59,24 @@ echo "=== the self test ==="
 STATUS=$?
 
 echo ""
-if [ $STATUS -eq 0 ]; then
-	echo "SELF TEST PASSED"
-else
+if [ $STATUS -ne 0 ]; then
 	echo "SELF TEST FAILED (exit $STATUS)"
+	exit $STATUS
+fi
+echo "SELF TEST PASSED"
+
+# The replay test: a finding that needs TIME to develop must still be
+# confirmable. It failed once, because the replay stopped too early.
+echo ""
+echo "=== the replay test ==="
+"$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+	--script res://addons/bugpup/tests/replay_test.gd
+STATUS=$?
+
+echo ""
+if [ $STATUS -eq 0 ]; then
+	echo "REPLAY TEST PASSED"
+else
+	echo "REPLAY TEST FAILED (exit $STATUS)"
 fi
 exit $STATUS
