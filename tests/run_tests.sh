@@ -36,8 +36,10 @@ for script in \
 	res://addons/bugpup/agent_panel.gd \
 	res://addons/bugpup/tests/bug_lab.tscn.gd \
 	res://addons/bugpup/tests/slow_fall_lab.tscn.gd \
+	res://addons/bugpup/tests/freeze_lab.tscn.gd \
 	res://addons/bugpup/tests/harness.gd \
-	res://addons/bugpup/tests/replay_test.gd; do
+	res://addons/bugpup/tests/replay_test.gd \
+	res://addons/bugpup/tests/freeze_test.gd; do
 	if [ ! -f "$PROJECT_DIR/${script#res://}" ]; then
 		echo "  SKIP $script (not present)"
 		continue
@@ -71,12 +73,34 @@ echo ""
 echo "=== the replay test ==="
 "$GODOT_BIN" --headless --path "$PROJECT_DIR" \
 	--script res://addons/bugpup/tests/replay_test.gd
-STATUS=$?
+REPLAY_STATUS=$?
 
 echo ""
-if [ $STATUS -eq 0 ]; then
+if [ $REPLAY_STATUS -eq 0 ]; then
 	echo "REPLAY TEST PASSED"
 else
-	echo "REPLAY TEST FAILED (exit $STATUS)"
+	echo "REPLAY TEST FAILED (exit $REPLAY_STATUS)"
 fi
-exit $STATUS
+
+# The freeze test: a body that stops when it should not is a freeze,
+# but a body that stops ON PURPOSE is not. The test plants one body
+# for each way a game can say "leave this one alone" and checks that
+# each is ignored, and that the body the bot really drives is still
+# reported.
+echo ""
+echo "=== the freeze test ==="
+"$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+	--script res://addons/bugpup/tests/freeze_test.gd
+FREEZE_STATUS=$?
+
+echo ""
+if [ $FREEZE_STATUS -eq 0 ]; then
+	echo "FREEZE TEST PASSED"
+else
+	echo "FREEZE TEST FAILED (exit $FREEZE_STATUS)"
+fi
+
+if [ $REPLAY_STATUS -ne 0 ]; then
+	exit $REPLAY_STATUS
+fi
+exit $FREEZE_STATUS

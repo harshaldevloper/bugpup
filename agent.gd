@@ -104,6 +104,14 @@ var _quarantined := {}
 # count for the replay to put them in the same place.
 var _scene_ticks := 0
 var _watched_scene: Node = null
+# The engine's own physics frame counter at the moment the current
+# scene was loaded. The input log is stamped with the ENGINE's frame
+# number, not the agent's: the agent may start several frames after
+# the scene does, and that gap is not the same every run. The engine's
+# counter has no such gap - it counts every physics frame of the game,
+# and it keeps counting across a scene reload, so a replay can put
+# the inputs back on exactly the frames they happened on.
+var _scene_loaded_at_frame := 0
 var _last_screenshot := ""
 var _last_input_frame := -999
 var _input_log: Array = []
@@ -118,6 +126,13 @@ var _finish_complete := false
 # The instance id of the body the agent is driving, worked out by
 # measurement - see _score_driver_candidates.
 var _driver_id := 0
+# The PATH of the body the agent is driving, as well as its instance
+# id. The instance id is not enough: a replay reloads the scene, so
+# the body is a new object with a new id, and a driver remembered by
+# id would match nothing during the replay. The path is the same
+# before and after a reload, so it is what identifies the driver
+# across a replay.
+var _driver_path := ""
 var _driver_score := {}
 # The movement vector of every watched body, and a snapshot of it
 # taken at the moment an action was pressed.
@@ -234,7 +249,7 @@ func _press(action: StringName) -> void:
 	Input.action_press(action, 1.0)
 	_pressed.append(action)
 	_last_input_frame = _scene_ticks
-	_input_log.append({"frame": _scene_ticks, "action": String(action), "pressed": true})
+	_input_log.append({"frame": Engine.get_physics_frames(), "action": String(action), "pressed": true})
 	# Remember how everything was moving at the moment of the press,
 	# so the driver can be worked out from what changes next.
 	_begin_driver_probe()
@@ -243,7 +258,7 @@ func _press(action: StringName) -> void:
 func _release_all() -> void:
 	for action in _pressed:
 		Input.action_release(action)
-		_input_log.append({"frame": _scene_ticks, "action": String(action), "pressed": false})
+		_input_log.append({"frame": Engine.get_physics_frames(), "action": String(action), "pressed": false})
 	# A release is an input event too. The jitter detector excuses a
 	# reversal when the bot is driving the body, and that excuse has
 	# to cover the whole span of the bot's activity - not just the
@@ -347,12 +362,11 @@ func _replay_inputs_and_watch(inputs: Array, target: String) -> bool:
 	var replay_ticks := 0
 	_replaying = true
 	var found := false
-	# The replay drives the recorded inputs on the NEW scene's own
-	# frame count. The inputs were stamped with the original scene's
-	# frame count, and a replay that put them on a different frame
-	# would give the player a different path - so the finding would
-	# never come back. The new scene's frame count starts at 0 and
-	# the scene has already run one frame by the time we get here.
+	# The recorded inputs are stamped with the ENGINE's physics frame
+	# numbers. A scene reload does not restart the engine's counter,
+	# so the replay waits until the counter reaches the frame an
+	# input was recorded on. The counter is the only clock that means
+	# the same thing in both runs.
 	var replay_scene_ticks := 0
 
 	# How long to run.
@@ -368,24 +382,42 @@ func _replay_inputs_and_watch(inputs: Array, target: String) -> bool:
 	# Now the replay keeps running until the SAME KIND of finding fires,
 	# up to replay_max_seconds. It stops the moment the finding comes
 	# back, so a quick finding still costs nothing.
+	# The recorded inputs are stamped with the ENGINE's frame numbers.
+	# The engine's counter keeps counting through a scene reload, so
+	# by the time the replay starts, every recorded frame is already
+	# in the past. The inputs are therefore applied by their OFFSET
+	# from the frame the scene was loaded at.
+	#
+	# The offset is measured from the scene's load, not from the first
+	# input. The agent may start a few frames after the scene does,
+	# and the player stands still for those frames while the agent
+	# gets going. A replay that applied the first input immediately
+	# made the player accelerate at a different moment, and it walked
+	# a different path - on the real game, that was the difference
+	# between falling off the arena and not.
+	var scene_frame := _scene_loaded_at_frame
 	var total_frames := 0
 	if not inputs.is_empty():
 		total_frames = int(inputs[inputs.size() - 1].get("frame", 0))
+	# How long the recorded inputs last, in frames.
+	var span: int = maxi(total_frames - scene_frame, 0)
 	# The tail after the last input, so a bug that happens after the
 	# last press is still caught - and never less than enough frames
 	# for the slowest detector (jitter needs a full window of frames
 	# plus several reversals inside it).
-	var limit: int = maxi(total_frames + 60, 120)
+	var limit: int = maxi(span + 60, 120)
 	# The hard ceiling: the replay may run this many frames past the
 	# last input looking for the finding to come back.
-	var deadline: int = total_frames + int(replay_max_seconds * 60.0)
+	var deadline: int = span + int(replay_max_seconds * 60.0)
 
 	while replay_ticks < limit or (not found and replay_ticks < deadline):
 		replay_ticks += 1
 		_replay_ticks = replay_ticks
-		# The new scene's own frame count. One frame has already run
-		# since the reload, so it starts at 1 here.
-		replay_scene_ticks += 1
+		# The frame the recorded inputs are driven on: the offset
+		# from the frame the scene was loaded at. That is what puts
+		# them back in the same place in the game's life - including
+		# the delay before the very first input.
+		replay_scene_ticks = scene_frame + replay_ticks
 		replay_index = _drive_replay_input(inputs, replay_index, replay_scene_ticks)
 		if replay_ticks % 10 == 0:
 			_discover_movers()
@@ -399,6 +431,17 @@ func _replay_inputs_and_watch(inputs: Array, target: String) -> bool:
 			if finding.is_empty():
 				finding = _check_tunnelling(body, rprev)
 			_push_history(body, _position_of(body))
+			# _check_body returns the FIRST finding it finds, and the
+			# detectors are ordered. A body falling out of the world
+			# tumbles, so its movement direction keeps changing - that
+			# reads as jitter - and the out_of-bounds check never ran.
+			# The replay is looking for ONE kind, so it has to check
+			# for that kind specifically, not accept whatever came
+			# first.
+			if not finding.is_empty() and String(finding.get("kind", "")) != target:
+				var wanted := _check_for_kind(body, 1.0 / 60.0, rprev, target)
+				if not wanted.is_empty():
+					finding = wanted
 			if not finding.is_empty() and String(finding.get("kind", "")) == target:
 				found = true
 				break
@@ -478,6 +521,49 @@ func _watched_bodies() -> Array:
 	return out
 
 
+## True if this body is subject to physics at all.
+##
+## A node that is not a physics body and has no collision shape is
+## moved by its own script, setting its position directly. Physics
+## cannot break it, so "it stopped moving" is not evidence of a bug -
+## an enemy that walks over and then waits is the usual false alarm.
+func _has_physics(body: Node) -> bool:
+	if body == null or not is_instance_valid(body):
+		return false
+	if body is PhysicsBody3D or body is PhysicsBody2D:
+		return true
+	if body is CollisionShape3D or body is CollisionShape2D:
+		return true
+	# A body with a collision shape as a child is a physics body too.
+	for child in body.get_children():
+		if child is CollisionShape3D or child is CollisionShape2D:
+			return true
+	return false
+
+
+## True if the game has told the agent to leave this body alone.
+##
+## A game can opt a body out two ways:
+##
+##   1. put it in the group "bugpup_ignore"
+##   2. set a meta on it: node.set_meta("bugpup_ignore", true)
+##
+## The group is the easy way to do it from the editor. The meta is the
+## easy way to do it from code. Both are checked, and the meta also
+## accepts the string "true" so a meta set from an editor inspector
+## works.
+func _is_opted_out(body: Node) -> bool:
+	if body == null or not is_instance_valid(body):
+		return true
+	if body.is_in_group("bugpup_ignore"):
+		return true
+	if body.has_meta("bugpup_ignore"):
+		var value: Variant = body.get_meta("bugpup_ignore")
+		if value == true or String(value).to_lower() == "true":
+			return true
+	return false
+
+
 func _add_watched(out: Array, seen: Dictionary, node: Node) -> void:
 	if node == null or not is_instance_valid(node):
 		return
@@ -488,6 +574,9 @@ func _add_watched(out: Array, seen: Dictionary, node: Node) -> void:
 		return
 	# Skip bodies the agent has quarantined.
 	if _quarantined.has(id):
+		return
+	# Skip bodies the game has opted out.
+	if _is_opted_out(node):
 		return
 	seen[id] = true
 	out.append(node)
@@ -599,6 +688,11 @@ func _score_driver_candidates() -> void:
 				best_score = _driver_score[key]
 				best = key
 		_driver_id = best
+		# Remember the path too, so the driver can still be recognised
+		# after the scene is reloaded and the instance ids all change.
+		var best_node = _watch_map.get(best, null)
+		if best_node != null and is_instance_valid(best_node):
+			_driver_path = String(best_node.get_path())
 
 
 ## The average movement over the last `count` entries of a history.
@@ -630,9 +724,15 @@ func _begin_driver_probe() -> void:
 
 ## True if this body is the one the agent is driving.
 func _is_bot_driven(body: Node) -> bool:
-	if body == null:
+	if body == null or not is_instance_valid(body):
 		return false
-	return body.get_instance_id() == _driver_id
+	if body.get_instance_id() == _driver_id:
+		return true
+	# The same body, after the scene was reloaded and the instance id
+	# changed. The path is what survives a reload.
+	if _driver_path != "" and String(body.get_path()) == _driver_path:
+		return true
+	return false
 
 
 func _velocity_of(body: Node) -> Vector3:
@@ -740,14 +840,22 @@ func _physics_process(delta: float) -> void:
 		_frame_ms.remove_at(0)
 	_elapsed += delta
 	_ticks += 1
-	# Count the game's frames since the scene was loaded. This is the
-	# clock the input log is written against.
+	# Count the game's frames since the scene was loaded, and note
+	# the engine's own frame number so the input log can be stamped
+	# with it.
 	var tree := get_tree()
 	var scene: Node = tree.current_scene if tree != null else null
 	if scene != _watched_scene:
 		# A new scene. The game's frame count starts again.
 		_watched_scene = scene
 		_scene_ticks = 0
+		# The engine's frame number at the moment the agent first sees
+		# the scene. The agent may start a few frames after the scene
+		# does, and the player stands still for those frames while
+		# the agent gets going - so a replay has to reproduce that
+		# delay, or the player accelerates at a different moment and
+		# walks a different path.
+		_scene_loaded_at_frame = Engine.get_physics_frames()
 	_scene_ticks += 1
 
 	_drive_random_input()
@@ -826,27 +934,55 @@ func _check_body(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 	_body_state[id] = state
 
 	# --- 5. NaN / broken numbers ---
-	if not pos.is_finite() or not vel.is_finite():
-		# Quarantine the body. A NaN velocity poisons the whole solver,
-		# so one broken body would blind the entire session and flood
-		# the log. Park it, stop watching it, and keep going.
-		_quarantine(body, pos, vel)
-		return {
-			"kind": "nan_numbers",
-			"body": label,
-			"detail": "position=%s velocity=%s" % [str(pos), str(vel)],
-		}
+	var nan_finding := _check_nan(body)
+	if not nan_finding.is_empty():
+		return nan_finding
 
 	# --- 3. jittering ---
-	# Jitter = the body keeps reversing direction while barely moving.
-	# A reversal is a negative dot product between consecutive movement
-	# vectors, which is a real direction change (the old sign test used
-	# "x > 0 OR z > 0", which flips whenever either axis goes negative).
+	var jitter_finding := _check_jitter(body, delta, prev_pos)
+	if not jitter_finding.is_empty():
+		return jitter_finding
+
+	# --- 2. fell out of the map ---
+	var oob_finding := _check_out_of_bounds(body)
+	if not oob_finding.is_empty():
+		return oob_finding
+
+	# --- 6. stuck inside geometry ---
+	var stuck_finding := _check_stuck(body)
+	if not stuck_finding.is_empty():
+		return stuck_finding
+
+	# --- 4. softlock ---
+	var softlock_finding := _check_softlock(body)
+	if not softlock_finding.is_empty():
+		return softlock_finding
+
+	# --- 7. freeze ---
+	var freeze_finding := _check_freeze(body, delta, prev_pos)
+	if not freeze_finding.is_empty():
+		return freeze_finding
+
+	_body_state[id] = state
+	return {}
+
+
+## The jitter detector on its own.
+##
+## Jitter = the body keeps reversing direction while barely moving.
+## A reversal is a negative dot product between consecutive movement
+## vectors, which is a real direction change (the old sign test used
+## "x > 0 OR z > 0", which flips whenever either axis goes negative).
+func _check_jitter(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
+	if body == null or not is_instance_valid(body):
+		return {}
+	var id: int = body.get_instance_id()
+	var state: Dictionary = _body_state.get(id, {})
+	var delta_vec: Vector3 = _position_of(body) - prev_pos
+	var step_len: float = delta_vec.length()
 	var flips: int = state.get("flips", 0)
 	var window: Array = state.get("window", [])
 	var prev_move: Vector3 = state.get("prev_move", Vector3.ZERO)
-	var delta_vec: Vector3 = pos - prev_pos
-	var step_len: float = delta_vec.length()
 	# A reversal only counts as jitter if the bot was NOT driving THIS
 	# body. When the agent presses a direction, the body the game
 	# steers with that direction is EXPECTED to turn. A crate that
@@ -882,18 +1018,48 @@ func _check_body(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 		# is "did the direction change". The path length over the
 		# window is what tells the two apart.
 		if avg < jitter_max_avg_step and moved >= jitter_min_path:
+			_body_state[id] = state
 			return {
 				"kind": "jitter",
-				"body": label,
+				"body": _body_label(body),
 				"detail": "%d direction reversals in %d frames, avg step %.4f" % [
 					flips, window.size(), avg],
 			}
 	state["flips"] = flips
 	state["window"] = window
+	_body_state[id] = state
+	return {}
 
-	# --- 2. fell out of the map ---
-	# A body that has left the world is parked: left falling it makes the
-	# engine log thousands of errors and drowns the real findings.
+
+## The NaN / broken-numbers detector on its own.
+func _check_nan(body: Node) -> Dictionary:
+	if body == null or not is_instance_valid(body):
+		return {}
+	var pos := _position_of(body)
+	var vel := _velocity_of(body)
+	if pos.is_finite() and vel.is_finite():
+		return {}
+	# Quarantine the body. A NaN velocity poisons the whole solver,
+	# so one broken body would blind the entire session and flood
+	# the log. Park it, stop watching it, and keep going.
+	_quarantine(body, pos, vel)
+	return {
+		"kind": "nan_numbers",
+		"body": _body_label(body),
+		"detail": "position=%s velocity=%s" % [str(pos), str(vel)],
+	}
+
+
+## The out-of-bounds detector on its own.
+##
+## A body that has left the world is parked: left falling it makes the
+## engine log thousands of errors and drowns the real findings.
+func _check_out_of_bounds(body: Node) -> Dictionary:
+	if body == null or not is_instance_valid(body):
+		return {}
+	var pos := _position_of(body)
+	var vel := _velocity_of(body)
+	var label := _body_label(body)
 	if pos.y < out_of_bounds_y:
 		_quarantine(body, pos, vel)
 		return {
@@ -908,10 +1074,16 @@ func _check_body(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 			"detail": "%.1f from origin, limit %.1f" % [
 				pos.length(), out_of_bounds_radius],
 		}
+	return {}
 
-	# --- 6. stuck inside geometry ---
-	# A body wedged inside a collider gets colliding normals from
-	# several sides that cancel out.
+
+## The stuck detector on its own.
+##
+## A body wedged inside a collider gets colliding normals from
+## several sides that cancel out.
+func _check_stuck(body: Node) -> Dictionary:
+	if body == null or not is_instance_valid(body):
+		return {}
 	if body is CharacterBody3D:
 		var cb := body as CharacterBody3D
 		var count := cb.get_slide_collision_count()
@@ -925,41 +1097,100 @@ func _check_body(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 			if deepest > stuck_depth and normal_sum.length() < stuck_normal_cancel:
 				return {
 					"kind": "stuck",
-					"body": label,
+					"body": _body_label(body),
 					"detail": "wedged %.3f into a collider, normals cancel" % deepest,
 				}
+	return {}
 
-	# --- 4. softlock ---
-	if _seen_progress:
-		var since := float(Time.get_ticks_usec() - _last_progress_usec) / 1000000.0
-		if since > softlock_seconds:
-			return {
-				"kind": "softlock",
-				"body": label,
-				"detail": "no Bugpup.progress() call for %.1fs" % since,
-			}
 
-	# --- 7. freeze ---
+## The softlock detector on its own.
+func _check_softlock(body: Node) -> Dictionary:
+	if body == null or not is_instance_valid(body):
+		return {}
+	if not _seen_progress:
+		return {}
+	var since := float(Time.get_ticks_usec() - _last_progress_usec) / 1000000.0
+	if since > softlock_seconds:
+		return {
+			"kind": "softlock",
+			"body": _body_label(body),
+			"detail": "no Bugpup.progress() call for %.1fs" % since,
+		}
+	return {}
+
+
+## The freeze detector on its own.
+##
+## A freeze means something that WAS moving stopped, when it should
+## have kept going. Three rules keep that honest:
+##
+##   1. the body has to have PHYSICS. A plain Node3D with a script
+##      that sets its own position is not subject to physics at
+##      all, so "it stopped moving" says nothing about a bug. An
+##      enemy that walks to you and then stands there to fight is
+##      the classic false alarm here.
+##   2. the body has to be the one the BOT is driving. The agent
+##      works out which body its input moves by measurement. A
+##      freeze is a statement about that body: the controls went
+##      to the player and the player stopped responding.
+##   3. the body has to have travelled a real distance first. A
+##      prop that never moved is scenery, not a freeze.
+func _check_freeze(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
+	if body == null or not is_instance_valid(body):
+		return {}
+	var id: int = body.get_instance_id()
+	var state: Dictionary = _body_state.get(id, {})
+	var delta_vec: Vector3 = _position_of(body) - prev_pos
+	var step_len: float = delta_vec.length()
 	var stalled: float = state.get("stalled", 0.0)
 	if step_len < 0.00001 and state.has("last_pos"):
 		stalled += delta
 	else:
 		stalled = 0.0
 	state["stalled"] = stalled
-	# A freeze means something that WAS moving stopped. A prop that
-	# never moved is scenery, not a freeze, so the body has to have
-	# travelled a real distance at some point during the session.
 	var travelled: float = state.get("travelled", 0.0)
 	travelled += step_len
 	state["travelled"] = travelled
+	_body_state[id] = state
 	if stalled > freeze_seconds and travelled >= freeze_min_travel:
+		if not _has_physics(body):
+			return {}
+		if not _is_bot_driven(body):
+			return {}
 		return {
 			"kind": "freeze",
-			"body": label,
+			"body": _body_label(body),
 			"detail": "no movement for %.1fs" % stalled,
 		}
+	return {}
 
-	_body_state[id] = state
+
+## Check ONE kind of problem on one body, regardless of the order the
+## detectors normally run in.
+##
+## The replay is looking for a specific kind - the kind that was seen
+## in the original run. The main check returns the FIRST finding it
+## finds, and the order matters: a body falling out of the world
+## tumbles, so the jitter detector fires first and the out-of-bounds
+## check never runs. The fall was real and the replay saw it, but it
+## reported it as jitter, so it was never confirmed as the finding it
+## actually was.
+##
+## This runs the wanted detector on its own.
+func _check_for_kind(body: Node, delta: float, prev_pos: Vector3, kind: String) -> Dictionary:
+	match kind:
+		"out_of_bounds":
+			return _check_out_of_bounds(body)
+		"jitter":
+			return _check_jitter(body, delta, prev_pos)
+		"nan_numbers":
+			return _check_nan(body)
+		"freeze":
+			return _check_freeze(body, delta, prev_pos)
+		"stuck":
+			return _check_stuck(body)
+		"through_wall":
+			return _check_tunnelling(body, prev_pos)
 	return {}
 
 
