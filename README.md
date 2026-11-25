@@ -23,7 +23,7 @@ network calls of any kind.
 | `nan_numbers` | A position or velocity became `NaN` or infinite. | **yes** - planted bug 4 |
 | `stuck` | A body is wedged inside a collider: it is deep inside a surface and the collision normals from several sides cancel out. Only checked on `CharacterBody3D`, because that is the only type that reports slide collisions. | **no** - implemented, no planted-bug test |
 | `softlock` | The game stopped making progress. You mark progress points in your own code (see below) and the agent notices when it stops reaching new ones. **It only fires if your code calls `Bugpup.progress()` at least once** - otherwise the agent has no idea what "progress" means for your game. | **no** - implemented, no planted-bug test |
-| `freeze` | A body stopped moving completely for a long time. Only counts a body that was seen to move earlier, so scenery is not a freeze. | **no** - implemented, no planted-bug test |
+| `freeze` | A body stopped moving completely for a long time. Three rules keep it honest: the body must have **physics** (a plain `Node3D` moved by its own script is not subject to physics), it must be the body **the bot's input moves**, and it must have travelled a real distance first. A body can also be **opted out** - see below. | **yes** - `tests/freeze_test.gd` |
 | `lag_spike` | One frame took far longer than the others - more than four times the median of the recent frames. | **no** - implemented, no planted-bug test |
 
 That is **eight** detectors, and the table lists every one of them by the
@@ -79,6 +79,36 @@ point, it reports a softlock.
 
 If your game never calls it, softlock detection simply never fires.
 Everything else still works.
+
+---
+
+## Telling the agent to leave a body alone
+
+Some bodies are supposed to stop. An enemy that walks over to you and
+then stands there to fight is doing exactly what it was told - but the
+agent cannot tell that from a game that has frozen.
+
+You can tell it, two ways:
+
+**The group.** Put the body in the group `bugpup_ignore`. You can do
+that in the editor (Node > Groups) or in code:
+
+```gdscript
+$Enemy.add_to_group("bugpup_ignore")
+```
+
+**The meta.** Set a meta on the body:
+
+```gdscript
+$Enemy.set_meta("bugpup_ignore", true)
+```
+
+Both work, and both apply to **every detector**, not just the freeze
+one. An opted-out body is never reported at all.
+
+The freeze detector also ignores any body that has no physics - a
+plain `Node3D` with a script that sets its own position - and any
+body the bot's input does not move.
 
 ---
 
@@ -306,6 +336,11 @@ These are real, and they are not fixed:
   still holding the key, so the player's deceleration was blamed on
   the game. That false alarm appeared on Godot 4.6.3 and not on 4.7.2,
   because the timing was that close.
+- **The freeze detector only reports the body the bot is driving.** A
+  crate that gets wedged and stops on its own is not reported, because
+  the agent cannot tell "this should still be moving" from "this is
+  finished". If your game has props that can jam, drive them yourself
+  or use `Bugpup.progress()`.
 - **Tunnelling detection needs a body that moved a lot in one frame.**
   A body that creeps through a wall over many frames is not caught.
 - **There is no crash detector.** The plugin cannot tell that the game
