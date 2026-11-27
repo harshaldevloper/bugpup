@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://addons/bugpup/tests/animation_lab.tscn.gd" id="1_lab"]
+
+[node name="AnimationLab" type="Node3D"]
+script = ExtResource("1_lab")

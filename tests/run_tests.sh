@@ -41,7 +41,8 @@ for script in \
 	res://addons/bugpup/tests/replay_test.gd \
 	res://addons/bugpup/tests/freeze_test.gd \
 	res://addons/bugpup/tests/exit_action_test.gd \
-	res://addons/bugpup/tests/teleport_test.gd; do
+	res://addons/bugpup/tests/teleport_test.gd \
+	res://addons/bugpup/tests/animation_test.gd; do
 	if [ ! -f "$PROJECT_DIR/${script#res://}" ]; then
 		echo "  SKIP $script (not present)"
 		continue
@@ -135,6 +136,22 @@ else
 	echo "TELEPORT TEST FAILED (exit $TELEPORT_STATUS)"
 fi
 
+# The animation test: a body whose movement comes from an
+# AnimationPlayer is not jittering. An elevator that goes up and down
+# on purpose is not a bug.
+echo ""
+echo "=== the animation test ==="
+"$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+	--script res://addons/bugpup/tests/animation_test.gd
+ANIMATION_STATUS=$?
+
+echo ""
+if [ $ANIMATION_STATUS -eq 0 ]; then
+	echo "ANIMATION TEST PASSED"
+else
+	echo "ANIMATION TEST FAILED (exit $ANIMATION_STATUS)"
+fi
+
 if [ $REPLAY_STATUS -ne 0 ]; then
 	exit $REPLAY_STATUS
 fi
@@ -144,4 +161,7 @@ fi
 if [ $EXIT_STATUS -ne 0 ]; then
 	exit $EXIT_STATUS
 fi
-exit $TELEPORT_STATUS
+if [ $TELEPORT_STATUS -ne 0 ]; then
+	exit $TELEPORT_STATUS
+fi
+exit $ANIMATION_STATUS

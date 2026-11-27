@@ -1008,6 +1008,15 @@ func _check_body(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 func _check_jitter(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 	if body == null or not is_instance_valid(body):
 		return {}
+	# A body whose movement comes from an ANIMATION is not jittering.
+	# An elevator that goes up and down on an AnimationPlayer reverses
+	# direction on purpose, and the physics server fighting the animated
+	# transform adds sub-centimetre noise on top - the official Godot
+	# character demos produced exactly that, and the detector reported
+	# it as "6 direction reversals in 45 frames" with an average step
+	# of 0.0067.
+	if _is_animated(body):
+		return {}
 	var id: int = body.get_instance_id()
 	var state: Dictionary = _body_state.get(id, {})
 	var delta_vec: Vector3 = _position_of(body) - prev_pos
@@ -1061,6 +1070,57 @@ func _check_jitter(body: Node, delta: float, prev_pos: Vector3) -> Dictionary:
 	state["window"] = window
 	_body_state[id] = state
 	return {}
+
+
+## True when an AnimationPlayer is moving THIS body.
+##
+## A body whose movement comes from an animation is not jittering. An
+## elevator that goes up and down on an AnimationPlayer reverses
+## direction on purpose, and the physics server fighting the animated
+## transform adds sub-centimetre noise on top of that. The official
+## Godot character demos do exactly this, and the jitter detector
+## reported their elevators as "6 direction reversals in 45 frames"
+## with an average step of 0.0067.
+##
+## It has to be the BODY's own transform that is animated. An
+## AnimationPlayer that only moves a child mesh says nothing about how
+## the body itself moves, so that body is still watched.
+func _is_animated(body: Node) -> bool:
+	if body == null or not is_instance_valid(body):
+		return false
+	for child in body.get_children():
+		if not (child is AnimationPlayer):
+			continue
+		var player := child as AnimationPlayer
+		if not player.is_playing():
+			continue
+		var anim := player.get_animation(player.current_animation)
+		if anim == null:
+			continue
+		for track in anim.get_track_count():
+			var path: NodePath = anim.track_get_path(track)
+			if path.get_subname_count() < 1:
+				continue
+			var prop := String(path.get_subname(0))
+			if not (prop in ["position", "global_position", "rotation",
+					"global_rotation", "rotation_degrees", "global_rotation_degrees",
+					"scale", "global_scale", "transform", "global_transform",
+					"basis", "global_basis", "quaternion", "global_quaternion"]):
+				continue
+			# The track path is relative to the AnimationPlayer's parent
+			# by default, so ".:position" means the AnimationPlayer's own
+			# parent - the body - is what moves.
+			# A path of "." means the AnimationPlayer's own parent,
+			# which is the root node the track path is relative to.
+			var names := path.get_concatenated_names()
+			var target: Node = null
+			if names == "" or names == ".":
+				target = player.get_parent()
+			else:
+				target = player.get_node_or_null(NodePath(names))
+			if target == body:
+				return true
+	return false
 
 
 ## The NaN / broken-numbers detector on its own.
