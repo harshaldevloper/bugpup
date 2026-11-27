@@ -237,12 +237,35 @@ func _candidate_actions() -> Array[StringName]:
 		var n := String(action)
 		if n.begins_with("ui_"):
 			continue
-		# Never press things that quit, reload, or reset the run - they
-		# would hide bugs rather than find them.
-		if n in ["reset_run", "pause", "quit", "reload_scene", "ui_cancel"]:
+		if _leaves_the_game(n):
 			continue
 		out.append(action)
 	return out
+
+
+## True when pressing this action would take the player out of the run.
+##
+## The bot presses random actions from the game's own input map. If it
+## presses the one the game uses to leave, the game quits mid-run and
+## the whole session is lost - the run looks like it found nothing
+## rather than like it was cut short. The action names for this differ
+## from game to game: the official Godot demos call it "exit", other
+## projects call it "quit", "leave" or "return_to_menu".
+##
+## This is a list of whole names, not a substring match. "reset_position"
+## is a gameplay action (the player falls off and is put back) and must
+## still be pressed, while "reset_run" restarts everything and must not.
+func _leaves_the_game(action_name: String) -> bool:
+	return action_name in [
+		# leaves the game
+		"exit", "quit", "quit_game", "leave", "close", "back",
+		"return_to_menu", "main_menu", "to_menu",
+		# restarts or reloads the run
+		"reset_run", "restart", "restart_run", "reload_scene",
+		"reload_level", "load_scene",
+		# stops the run
+		"pause", "ui_cancel",
+	]
 
 
 func _press(action: StringName) -> void:

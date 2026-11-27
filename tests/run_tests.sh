@@ -39,7 +39,8 @@ for script in \
 	res://addons/bugpup/tests/freeze_lab.tscn.gd \
 	res://addons/bugpup/tests/harness.gd \
 	res://addons/bugpup/tests/replay_test.gd \
-	res://addons/bugpup/tests/freeze_test.gd; do
+	res://addons/bugpup/tests/freeze_test.gd \
+	res://addons/bugpup/tests/exit_action_test.gd; do
 	if [ ! -f "$PROJECT_DIR/${script#res://}" ]; then
 		echo "  SKIP $script (not present)"
 		continue
@@ -100,7 +101,26 @@ else
 	echo "FREEZE TEST FAILED (exit $FREEZE_STATUS)"
 fi
 
+# The exit action test: the bot must never press an action that takes
+# the player out of the run. It did once, and the game quit in the
+# middle of the session - the run then looked like it had found nothing.
+echo ""
+echo "=== the exit action test ==="
+"$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+	--script res://addons/bugpup/tests/exit_action_test.gd
+EXIT_STATUS=$?
+
+echo ""
+if [ $EXIT_STATUS -eq 0 ]; then
+	echo "EXIT ACTION TEST PASSED"
+else
+	echo "EXIT ACTION TEST FAILED (exit $EXIT_STATUS)"
+fi
+
 if [ $REPLAY_STATUS -ne 0 ]; then
 	exit $REPLAY_STATUS
 fi
-exit $FREEZE_STATUS
+if [ $FREEZE_STATUS -ne 0 ]; then
+	exit $FREEZE_STATUS
+fi
+exit $EXIT_STATUS
