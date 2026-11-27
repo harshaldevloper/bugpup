@@ -40,7 +40,8 @@ for script in \
 	res://addons/bugpup/tests/harness.gd \
 	res://addons/bugpup/tests/replay_test.gd \
 	res://addons/bugpup/tests/freeze_test.gd \
-	res://addons/bugpup/tests/exit_action_test.gd; do
+	res://addons/bugpup/tests/exit_action_test.gd \
+	res://addons/bugpup/tests/teleport_test.gd; do
 	if [ ! -f "$PROJECT_DIR/${script#res://}" ]; then
 		echo "  SKIP $script (not present)"
 		continue
@@ -117,10 +118,30 @@ else
 	echo "EXIT ACTION TEST FAILED (exit $EXIT_STATUS)"
 fi
 
+# The teleport test: a body that is PUT on the other side of a wall is
+# not a body that went through it. Games respawn a player by setting
+# its position, and the ray from the old position to the new one
+# crosses whatever is in between.
+echo ""
+echo "=== the teleport test ==="
+"$GODOT_BIN" --headless --path "$PROJECT_DIR" \
+	--script res://addons/bugpup/tests/teleport_test.gd
+TELEPORT_STATUS=$?
+
+echo ""
+if [ $TELEPORT_STATUS -eq 0 ]; then
+	echo "TELEPORT TEST PASSED"
+else
+	echo "TELEPORT TEST FAILED (exit $TELEPORT_STATUS)"
+fi
+
 if [ $REPLAY_STATUS -ne 0 ]; then
 	exit $REPLAY_STATUS
 fi
 if [ $FREEZE_STATUS -ne 0 ]; then
 	exit $FREEZE_STATUS
 fi
-exit $EXIT_STATUS
+if [ $EXIT_STATUS -ne 0 ]; then
+	exit $EXIT_STATUS
+fi
+exit $TELEPORT_STATUS

@@ -17,7 +17,7 @@ network calls of any kind.
 
 | It is called | What it means | Tested? |
 |---|---|---|
-| `through_wall` | A body passed through a wall. It is cast as a ray from the body's recent positions; if the body ended up well past a surface the ray hit, it went through. | **yes** - planted bug 1 |
+| `through_wall` | A body passed through a wall. It is cast as a ray from the body's recent positions; if the body ended up well past a surface the ray hit, it went through. A body that was **teleported** is not counted - a game that respawns a player by setting its position would otherwise look like a wall crossing. | **yes** - planted bug 1 |
 | `out_of_bounds` | A body left the world - fell below the floor, or ended up impossibly far from the origin. Two rules, one kind. | **yes** - planted bug 3 |
 | `jitter` | A body keeps reversing direction while barely moving. That is the classic "stuck on a slope and vibrating" bug. | **yes** - planted bug 2 |
 | `nan_numbers` | A position or velocity became `NaN` or infinite. | **yes** - planted bug 4 |

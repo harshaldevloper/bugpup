@@ -452,7 +452,7 @@ func _replay_inputs_and_watch(inputs: Array, target: String) -> bool:
 			var rprev: Vector3 = rstate.get("last_pos", _position_of(body))
 			var finding := _check_body(body, 1.0 / 60.0, rprev)
 			if finding.is_empty():
-				finding = _check_tunnelling(body, rprev)
+				finding = _check_tunnelling(body, rprev, 1.0 / 60.0)
 			_push_history(body, _position_of(body))
 			# _check_body returns the FIRST finding it finds, and the
 			# detectors are ordered. A body falling out of the world
@@ -834,6 +834,15 @@ func _body_radius(body: Node) -> float:
 		if shape is BoxShape3D:
 			var s: Vector3 = (shape as BoxShape3D).size
 			return maxf(s.x, maxf(s.y, s.z)) * 0.5
+		# A capsule and a cylinder are the two shapes most player
+		# characters use, and they used to fall through to the 0.05
+		# default below. That made the body look 0.4 units wide when it
+		# was 0.8, and the "went through" threshold with it - so the
+		# detector reported a body that merely grazed a surface.
+		if shape is CapsuleShape3D:
+			return (shape as CapsuleShape3D).radius
+		if shape is CylinderShape3D:
+			return (shape as CylinderShape3D).radius
 	if body is CollisionObject3D:
 		var col := body as CollisionObject3D
 		for child in col.get_children():
@@ -912,7 +921,7 @@ func _physics_process(delta: float) -> void:
 		var prev_pos: Vector3 = bstate.get("last_pos", _position_of(body))
 		var finding := _check_body(body, delta, prev_pos)
 		if finding.is_empty():
-			finding = _check_tunnelling(body, prev_pos)
+			finding = _check_tunnelling(body, prev_pos, delta)
 		if not finding.is_empty():
 			_capture_screenshot(String(finding.get("kind", "bug")))
 			_report(finding)
@@ -1213,7 +1222,7 @@ func _check_for_kind(body: Node, delta: float, prev_pos: Vector3, kind: String) 
 		"stuck":
 			return _check_stuck(body)
 		"through_wall":
-			return _check_tunnelling(body, prev_pos)
+			return _check_tunnelling(body, prev_pos, delta)
 	return {}
 
 
@@ -1229,7 +1238,7 @@ func _check_for_kind(body: Node, delta: float, prev_pos: Vector3, kind: String) 
 ## frame. Checking every remembered position makes the detector
 ## tolerant of that - and it reports the wall the body actually
 ## crossed first, which is the one worth reporting.
-func _check_tunnelling(body: Node, prev_pos: Vector3) -> Dictionary:
+func _check_tunnelling(body: Node, prev_pos: Vector3, delta: float) -> Dictionary:
 	if not (body is Node3D):
 		return {}
 	var id: int = body.get_instance_id()
@@ -1244,6 +1253,34 @@ func _check_tunnelling(body: Node, prev_pos: Vector3) -> Dictionary:
 	if space == null:
 		return {}
 	var body_radius := _body_radius(body)
+
+	# A body that MOVED a long way in one frame, when its own velocity
+	# says it should not have, was TELEPORTED. Games respawn a player by
+	# setting its position directly - the official Godot platformer demo
+	# puts the player back at spawn when it falls below the world. The
+	# ray from the old position to the new one crosses whatever is
+	# between them, which looks exactly like going through a wall, and
+	# it confirmed 3 times out of 3 because the respawn is
+	# deterministic. A body that teleported did not go through
+	# anything, so it is not a tunnelling candidate.
+	#
+	# The test only applies to a body with a physics velocity. A plain
+	# Node3D moved by its own script has no velocity to compare
+	# against, so for that the rule cannot be applied and the check
+	# goes ahead as before.
+	var jump := 0.0
+	if body is CharacterBody3D or body is RigidBody3D \
+			or body is CharacterBody2D or body is RigidBody2D:
+		var expected := _velocity_of(body).length() * maxf(delta, 0.0001)
+		jump = (now - prev_pos).length()
+		if jump > 0.35 and jump > expected * 3.0 + 0.5:
+			# It jumped. Do not cast a ray across the jump, and do not
+			# let the remembered positions from before it span it
+			# either - the history is emptied here, and the current
+			# position is the only one added after this.
+			state["history"] = []
+			_body_state[id] = state
+			return {}
 
 	# The positions to check against, oldest first. The current position
 	# is added by the caller each frame; this list is the history.
