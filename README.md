@@ -27,8 +27,8 @@ network calls of any kind.
 | `lag_spike` | One frame took far longer than the others - more than four times the median of the recent frames. | **no** - implemented, no planted-bug test |
 
 That is **eight** detectors, and the table lists every one of them by the
-exact name the plugin reports. Four have a planted-bug test; four are
-implemented but untested.
+exact name the plugin reports. Five have a test that proves they work;
+three are implemented but untested.
 
 **There is no `crash` detector.** An earlier version of this README
 listed one. It does not exist: the plugin does not read engine error
@@ -281,10 +281,18 @@ So this test proves two things and no more:
 2. **The same world with the bugs removed produces zero findings**, so
    the false-alarm count is 0, not an estimate.
 
-It does **not** prove the other four detectors work. `stuck`,
-`softlock`, `freeze` and `lag_spike` are implemented and listed above,
-but this test does not exercise them, so they are not claimed here as
-tested.
+It does **not** prove the other three detectors work. `stuck`,
+`softlock` and `lag_spike` are implemented and listed above, but this
+test does not exercise them, so they are not claimed here as tested.
+`freeze` has its own test, `tests/freeze_test.gd`, which plants a body
+that really freezes plus three decoys that only look like one.
+
+There is a fifth test, `tests/exit_action_test.gd`. It checks that the
+bot never presses an action that takes the player out of the run - a
+game's "exit" key, for example. Before this test existed, the bot
+pressed that key in the official Godot demos, the game quit in the
+middle of the run, and the run reported "no bugs" because it had been
+cut short.
 
 ---
 
